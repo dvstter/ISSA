@@ -1,0 +1,1 @@
+rm -rf wandb tb *.csv buffer exp_local *.pt

@@ -1,0 +1,4 @@
+_target_: encoder.ResEncoder
+frame_stack: ${frame_stack}
+obs_shape: ???
+repr_dim: 1024
