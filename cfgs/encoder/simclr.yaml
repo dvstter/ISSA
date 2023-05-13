@@ -4,3 +4,4 @@ frame_stack: ${frame_stack}
 obs_shape: ???
 repr_dim: 1024
 stacks: [cur,diff]
+applied_layers: 2

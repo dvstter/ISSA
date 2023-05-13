@@ -80,7 +80,7 @@ class ResEncoder(nn.Module):
 
 
 class SimclrEncoder(nn.Module):
-  def __init__(self, ckpt_path, frame_stack, obs_shape, repr_dim=1024, stacks=['cur', 'diff']):
+  def __init__(self, ckpt_path, frame_stack, obs_shape, repr_dim=1024, stacks=['cur', 'diff'], applied_layers=2):
     """
     @param ckpt_path:
     @param frame_stack:
@@ -104,6 +104,7 @@ class SimclrEncoder(nn.Module):
     self.repr_dim = repr_dim
     self.frame_stack = frame_stack
     self.stacks = stacks
+    self.applied_layers = applied_layers
 
     # test conv-net output and generate full-connnected layer
     obs_shape = [obs_shape[x] for x in range(3)]
@@ -121,18 +122,22 @@ class SimclrEncoder(nn.Module):
     batch, in_channel, width, height = obs.shape
     in_channel = in_channel // self.frame_stack
     obs = obs.view(batch * self.frame_stack, in_channel, width, height)
-    # apply conv-nets
-    conv = self.model.net(obs)
-    _, out_channel, width, height = conv.shape
-    conv = conv.view(batch, self.frame_stack, out_channel, width, height)
+
+    for name, layer in self.model.net._modules.items():
+      obs = layer(obs)
+      if name == str(self.applied_layers):
+        break
+
+    _, out_channel, width, height = obs.shape
+    obs = obs.view(batch, self.frame_stack, out_channel, width, height)
     # stacks all the information
-    temp = {'ori': conv, 'cur': conv[:,1:], 'prev': conv[:, :-1]}
+    temp = {'ori': obs, 'cur': obs[:,1:], 'prev': obs[:, :-1]}
     temp['diff'] = temp['cur'] - temp['prev']
-    conv = torch.cat([temp[x] for x in self.stacks], axis=1)
-    conv = conv.view(batch, conv.shape[1] * out_channel, width, height) # merge dim 2 and 3
+    obs = torch.cat([temp[x] for x in self.stacks], axis=1)
+    obs = obs.view(batch, obs.shape[1] * out_channel, width, height) # merge dim 2 and 3
     if flatten:
-      conv = conv.view(conv.size(0), -1)
-    return conv
+      obs = obs.view(obs.size(0), -1)
+    return obs
 
   def forward(self, obs):
     return self.ln(self.fc(self.forward_conv(obs)))

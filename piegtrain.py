@@ -59,7 +59,8 @@ class Workspace:
                                  str(self.cfg.seed),
                                  'bat'+str(self.cfg.batch_size),
                                  'fea'+str(self.cfg.agent.feature_dim),
-                                 'hid'+str(self.cfg.agent.hidden_dim)])
+                                 'hid'+str(self.cfg.agent.hidden_dim),
+                                 'lay'+str(self.cfg.encoder.applied_layers)])
             wandb.init(project="urlb_finetune", group=self.cfg.task_name, name=exp_name)
         # create logger
         self.logger = Logger(self.work_dir, use_tb=self.cfg.use_tb, use_wandb=self.cfg.use_wandb)
