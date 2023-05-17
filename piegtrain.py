@@ -28,6 +28,7 @@ torch.backends.cudnn.benchmark = True
 
 
 def make_agent(obs_spec, action_spec, cfg):
+    # fill missing hydra's parameters for agent and encoder, and then instantiate them
     cfg.obs_shape = obs_spec.shape
     cfg.action_shape = action_spec.shape
     cfg.encoder.obs_shape = obs_spec.shape
@@ -55,14 +56,15 @@ class Workspace:
         # create logger
         encoder_name = self.cfg.encoder._target_.strip().split('.')[1].lower()[:-7]
         if self.cfg.use_wandb:
-            exp_name = '_'.join([encoder_name,
+            exp_name = [encoder_name,
                                  str(self.cfg.seed),
                                  'bat'+str(self.cfg.batch_size),
                                  'fea'+str(self.cfg.agent.feature_dim),
-                                 'hid'+str(self.cfg.agent.hidden_dim),
-                                 'lay'+str(self.cfg.encoder.applied_layers)])
+                                 'hid'+str(self.cfg.agent.hidden_dim)]
+            if encoder_name == 'simclr':
+                exp_name += ['lay' + str(self.cfg.encoder.applied_layers)]
+            exp_name = '_'.join(exp_name)
             wandb.init(project="urlb_finetune", group=self.cfg.task_name, name=exp_name)
-        # create logger
         self.logger = Logger(self.work_dir, use_tb=self.cfg.use_tb, use_wandb=self.cfg.use_wandb)
         # create envs
         self.train_env = dmc.make(self.cfg.task_name, self.cfg.frame_stack,

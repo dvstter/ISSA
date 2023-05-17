@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - task@_global_: finger_spin
+  - task@_global_: cartpole_swingup
   - replay_buffer@_global_: numpy
-  - encoder: simclr
+  - encoder: vit
   - override hydra/launcher: submitit_local
 
 # task settings

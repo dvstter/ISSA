@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet18
 from torchvision import transforms
+from transformers import ViTImageProcessor, ViTForImageClassification
 
 import utils
 import simclr
@@ -74,6 +75,43 @@ class ResEncoder(nn.Module):
     if flatten:
       conv = conv.view(conv.size(0), -1)
     return conv
+
+  def forward(self, obs):
+    return self.ln(self.fc(self.forward_conv(obs)))
+
+
+class ViTEncoder(nn.Module):
+  def __init__(self, frame_stack, obs_shape, device, repr_dim=1024, stacks=['cur', 'diff']):
+    super(ViTEncoder, self).__init__()
+    self.transform = transforms.Resize(224)
+    self.model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224')
+    for param in self.model.parameters():
+      param.requires_grad = False
+    self.frame_stack, self.obs_shape, self.device, self.stacks = frame_stack, obs_shape, device, stacks
+    self.repr_dim = repr_dim
+    obs_shape = [obs_shape[x] for x in range(3)]
+    out_dim = self.forward_conv(torch.randint(0, 255, [32, ] + obs_shape, dtype=torch.uint8)).shape[1]
+    self.fc = nn.Linear(out_dim, self.repr_dim)
+    self.ln = nn.LayerNorm(self.repr_dim)
+    nn.init.orthogonal_(self.fc.weight.data)
+    self.fc.bias.data.fill_(0.0)
+
+  @torch.no_grad()
+  def forward_conv(self, obs):
+    obs = obs / 255.0 - 0.5
+    obs = self.transform(obs)
+    batch, channel, height, width = obs.shape
+    new_batch, new_channel = batch * self.frame_stack, channel // self.frame_stack
+    obs = obs.view(new_batch, new_channel, height, width)
+    obs = {'pixel_values': obs}
+    obs = self.model.vit(**obs)
+    obs = obs[0][:, 0, :]
+    obs = obs.view(batch, self.frame_stack, obs.shape[-1])
+    temp = {'ori': obs, 'cur': obs[:, 1:], 'prev': obs[:, :-1]}
+    temp['diff'] = temp['cur'] - temp['prev']
+    obs = torch.cat([temp[x] for x in self.stacks], axis=1)
+    obs = obs.view(batch, -1)
+    return obs
 
   def forward(self, obs):
     return self.ln(self.fc(self.forward_conv(obs)))

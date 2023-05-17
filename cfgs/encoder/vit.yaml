@@ -1,0 +1,6 @@
+_target_: encoder.ViTEncoder
+frame_stack: ${frame_stack}
+obs_shape: ???
+device: ${device}
+repr_dim: 1024
+stacks: [cur,diff]
