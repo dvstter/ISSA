@@ -1,174 +1,5 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-import datetime
-import abc
-import io
-import random
-import traceback
-from collections import defaultdict
-
 import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import IterableDataset
-
-
-def episode_len(episode):
-    # subtract -1 because the dummy first transition
-    return next(iter(episode.values())).shape[0] - 1
-
-
-def save_episode(episode, fn):
-    with io.BytesIO() as bs:
-        np.savez_compressed(bs, **episode)
-        bs.seek(0)
-        with fn.open('wb') as f:
-            f.write(bs.read())
-
-
-def load_episode(fn):
-    with fn.open('rb') as f:
-        episode = np.load(f)
-        episode = {k: episode[k] for k in episode.keys()}
-        return episode
-
-
-class ReplayBufferStorage:
-    def __init__(self, data_specs, replay_dir):
-        """
-        @param data_specs: tuple object which containing dictionary-like objects, describing the name, dim and value type
-        @param replay_dir: path for storing replay buffer
-        """
-        self._data_specs = data_specs
-        self._replay_dir = replay_dir
-        replay_dir.mkdir(exist_ok=True)
-        # episode is stored like this {'rewards': [1,2,...], 'obs': [obs1, obs2,...]}
-        self._current_episode = defaultdict(list)
-        self._preload()
-
-    def __len__(self):
-        return self._num_transitions
-
-    def add(self, time_step):
-        for spec in self._data_specs:
-            value = time_step[spec.name]
-            if np.isscalar(value):
-                value = np.full(spec.shape, value, spec.dtype)
-            assert spec.shape == value.shape and spec.dtype == value.dtype
-            self._current_episode[spec.name].append(value)
-        if time_step.last():
-            episode = dict()
-            for spec in self._data_specs:
-                value = self._current_episode[spec.name]
-                episode[spec.name] = np.array(value, spec.dtype)
-            self._current_episode = defaultdict(list)
-            self._store_episode(episode)
-
-    def _preload(self):
-        self._num_episodes = 0
-        self._num_transitions = 0
-        for fn in self._replay_dir.glob('*.npz'):
-            _, _, eps_len = fn.stem.split('_')
-            self._num_episodes += 1
-            self._num_transitions += int(eps_len)
-
-    def _store_episode(self, episode):
-        eps_idx = self._num_episodes
-        eps_len = episode_len(episode)
-        self._num_episodes += 1
-        self._num_transitions += eps_len
-        ts = datetime.datetime.now().strftime('%Y%m%dT%H%M%S')
-        eps_fn = f'{ts}_{eps_idx}_{eps_len}.npz'
-        save_episode(episode, self._replay_dir / eps_fn)
-
-
-class IterableReplayBuffer(IterableDataset):
-    def __init__(self, replay_dir, max_size, num_workers, nstep, discount,
-                 fetch_every, save_snapshot):
-        self._replay_dir = replay_dir
-        self._size = 0
-        self._max_size = max_size
-        self._num_workers = max(1, num_workers)
-        self._episode_fns = []
-        self._episodes = dict()
-        self._nstep = nstep
-        self._discount = discount
-        self._fetch_every = fetch_every
-        self._samples_since_last_fetch = fetch_every
-        self._save_snapshot = save_snapshot
-
-    def _sample_episode(self):
-        eps_fn = random.choice(self._episode_fns)
-        return self._episodes[eps_fn]
-
-    def _store_episode(self, eps_fn):
-        try:
-            episode = load_episode(eps_fn)
-        except:
-            return False
-        eps_len = episode_len(episode)
-        while eps_len + self._size > self._max_size:
-            early_eps_fn = self._episode_fns.pop(0)
-            early_eps = self._episodes.pop(early_eps_fn)
-            self._size -= episode_len(early_eps)
-            early_eps_fn.unlink(missing_ok=True)
-        self._episode_fns.append(eps_fn)
-        self._episode_fns.sort()
-        self._episodes[eps_fn] = episode
-        self._size += eps_len
-
-        if not self._save_snapshot:
-            eps_fn.unlink(missing_ok=True)
-        return True
-
-    def _try_fetch(self):
-        if self._samples_since_last_fetch < self._fetch_every:
-            return
-        self._samples_since_last_fetch = 0
-        try:
-            worker_id = torch.utils.data.get_worker_info().id
-        except:
-            worker_id = 0
-        eps_fns = sorted(self._replay_dir.glob('*.npz'), reverse=True)
-        fetched_size = 0
-        for eps_fn in eps_fns:
-            eps_idx, eps_len = [int(x) for x in eps_fn.stem.split('_')[1:]]
-            if eps_idx % self._num_workers != worker_id:
-                continue
-            if eps_fn in self._episodes.keys():
-                break
-            if fetched_size + eps_len > self._max_size:
-                break
-            fetched_size += eps_len
-            if not self._store_episode(eps_fn):
-                break
-
-    def _sample(self):
-        try:
-            self._try_fetch()
-        except:
-            traceback.print_exc()
-        self._samples_since_last_fetch += 1
-        episode = self._sample_episode()
-        # add +1 for the first dummy transition
-        idx = np.random.randint(0, episode_len(episode) - self._nstep + 1) + 1
-        obs = episode['observation'][idx - 1]
-        action = episode['action'][idx]
-        next_obs = episode['observation'][idx + self._nstep - 1]
-        reward = np.zeros_like(episode['reward'][idx])
-        discount = np.ones_like(episode['discount'][idx])
-        for i in range(self._nstep):
-            step_reward = episode['reward'][idx + i]
-            reward += discount * step_reward
-            discount *= episode['discount'][idx + i] * self._discount
-        return (obs, action, reward, discount, next_obs)
-
-    def __iter__(self):
-        while True:
-            yield self._sample()
-
+import abc
 
 class AbstractReplayBuffer(abc.ABC):
     @abc.abstractmethod
@@ -183,28 +14,122 @@ class AbstractReplayBuffer(abc.ABC):
     def __len__(self):
         pass
 
+class EfficientReplayBuffer(AbstractReplayBuffer):
+    def __init__(self, buffer_size, batch_size, nstep, discount, frame_stack, data_specs=None):
+        self.buffer_size = buffer_size
+        self.data_dict = {}
+        self.index = -1
+        self.traj_index = 0
+        self.frame_stack = frame_stack
+        self._recorded_frames = frame_stack + 1
+        self.batch_size = batch_size
+        self.nstep = nstep
+        self.discount = discount
+        self.full = False
+        # fixed since we can only sample transitions that occur nstep earlier
+        # than the end of each episode or the last recorded observation
+        self.discount_vec = np.power(discount, np.arange(nstep)).astype('float32')
+        self.next_dis = discount**nstep
 
-def _worker_init_fn(worker_id):
-    seed = np.random.get_state()[1][0] + worker_id
-    np.random.seed(seed)
-    random.seed(seed)
+    def _initial_setup(self, time_step):
+        self.index = 0
+        self.obs_shape = list(time_step.observation.shape)
+        self.ims_channels = self.obs_shape[0] // self.frame_stack
+        self.act_shape = time_step.action.shape
+        self.physics_shape = time_step.physics.shape
 
+        self.obs = np.zeros([self.buffer_size, self.ims_channels, *self.obs_shape[1:]], dtype=np.uint8)
+        self.act = np.zeros([self.buffer_size, *self.act_shape], dtype=np.float32)
+        self.rew = np.zeros([self.buffer_size], dtype=np.float32)
+        self.dis = np.zeros([self.buffer_size], dtype=np.float32)
+        self.phy = np.zeros([self.buffer_size, *self.physics_shape], dtype=np.float32)
+        # which timesteps can be validly sampled (Not within nstep from end of an episode or last recorded observation)
+        self.valid = np.zeros([self.buffer_size], dtype=np.bool_)
 
-def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
-                       save_snapshot, nstep, discount):
-    max_size_per_worker = max_size // max(1, num_workers)
+    def add_data_point(self, time_step):
+        first = time_step.first()
+        latest_obs = time_step.observation[-self.ims_channels:]
+        if first:
+            # if first observation in a trajectory, record frame_stack copies of it
+            end_index = self.index + self.frame_stack
+            end_invalid = end_index + self.frame_stack + 1
+            if end_invalid > self.buffer_size:
+                if end_index > self.buffer_size:
+                    end_index = end_index % self.buffer_size
+                    self.obs[self.index:self.buffer_size] = latest_obs
+                    self.obs[0:end_index] = latest_obs
+                    self.phy[self.index:self.buffer_size] = time_step.physics
+                    self.phy[0:end_index] = time_step.physics
+                    self.full = True
+                else:
+                    self.obs[self.index:end_index] = latest_obs
+                    self.phy[self.index:end_index] = time_step.physics
+                end_invalid = end_invalid % self.buffer_size
+                self.valid[self.index:self.buffer_size] = False
+                self.valid[0:end_invalid] = False
+            else:
+                self.obs[self.index:end_index] = latest_obs
+                self.phy[self.index:end_index] = time_step.physics
+                self.valid[self.index:end_invalid] = False
+            self.index = end_index
+            self.traj_index = 1
+        else:
+            np.copyto(self.obs[self.index], latest_obs)
+            np.copyto(self.act[self.index], time_step.action)
+            np.copyto(self.phy[self.index], time_step.physics)
+            self.rew[self.index] = time_step.reward
+            self.dis[self.index] = time_step.discount
+            # index is valid only if subsequent n-step indices are filled. that means, when self.traj_index reached
+            # the n-step threshold, we can make the first n-step index of the current self.index valid.
+            self.valid[(self.index + self.frame_stack) % self.buffer_size] = False
+            if self.traj_index >= self.nstep:
+                self.valid[(self.index - self.nstep + 1) % self.buffer_size] = True
+            self.index += 1
+            self.traj_index += 1
+            if self.index == self.buffer_size:
+                self.index = 0
+                self.full = True
 
-    iterable = IterableReplayBuffer(replay_dir,
-                                    max_size_per_worker,
-                                    num_workers,
-                                    nstep,
-                                    discount,
-                                    fetch_every=1000,
-                                    save_snapshot=save_snapshot)
+    def add(self, time_step):
+        if self.index == -1:
+            self._initial_setup(time_step)
+        self.add_data_point(time_step)
 
-    loader = torch.utils.data.DataLoader(iterable,
-                                         batch_size=batch_size,
-                                         num_workers=num_workers,
-                                         pin_memory=True,
-                                         worker_init_fn=_worker_init_fn)
-    return loader
+    def __next__(self, ):
+        # sample only valid indices
+        indices = np.random.choice(self.valid.nonzero()[0], size=self.batch_size)
+        return self.gather_nstep_indices(indices)
+
+    def gather_nstep_indices(self, indices):
+        n_samples = indices.shape[0]
+        all_gather_ranges = np.stack([np.arange(indices[i] - self.frame_stack, indices[i] + self.nstep)
+                                  for i in range(n_samples)], axis=0) % self.buffer_size
+        gather_ranges = all_gather_ranges[:, self.frame_stack:] # bs x nstep
+        obs_gather_ranges = all_gather_ranges[:, :self.frame_stack]
+        nobs_gather_ranges = all_gather_ranges[:, -self.frame_stack:]
+        phy_gather_ranges = obs_gather_ranges[:, -1:]
+        nphy_gather_ranges = nobs_gather_ranges[:, -1:]
+
+        all_rewards = self.rew[gather_ranges]
+
+        # Could implement reward computation as a matmul in pytorch for
+        # marginal additional speed improvement
+        rew = np.sum(all_rewards * self.discount_vec, axis=1, keepdims=True)
+
+        obs = np.reshape(self.obs[obs_gather_ranges], [n_samples, *self.obs_shape])
+        nobs = np.reshape(self.obs[nobs_gather_ranges], [n_samples, *self.obs_shape])
+
+        phy = np.reshape(self.phy[phy_gather_ranges], [n_samples, *self.physics_shape])
+        nphy = np.reshape(self.phy[nphy_gather_ranges], [n_samples, *self.physics_shape])
+
+        act = self.act[indices]
+        dis = np.expand_dims(self.next_dis * self.dis[nobs_gather_ranges[:, -1]], axis=-1)
+
+        ret = (obs, act, rew, dis, nobs, phy, nphy)
+        return ret
+
+    def __len__(self):
+        if self.full:
+            return self.buffer_size
+        else:
+            return self.index

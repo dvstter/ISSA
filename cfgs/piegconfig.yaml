@@ -1,8 +1,7 @@
 defaults:
   - _self_
-  - task@_global_: cartpole_swingup
-  - replay_buffer@_global_: numpy
-  - encoder: vit
+  - task@_global_: cheetah_run
+  - encoder: resnet
   - override hydra/launcher: submitit_local
 
 # task settings
@@ -11,18 +10,13 @@ action_repeat: 2
 discount: 0.99
 # train settings
 num_seed_frames: 4000
-num_train_frames: 1000000
+num_train_frames: 100000
 # eval
 eval_every_frames: 10000
 num_eval_episodes: 10
 # snapshot
 save_snapshot: true
 load_snapshot: true
-# replay buffer
-replay_buffer_size: 1000000
-replay_buffer_num_workers: 4
-nstep: 3
-batch_size: 256
 # misc
 seed: 4
 device: cuda:0
@@ -30,28 +24,44 @@ save_video: false
 save_train_video: false
 use_tb: true
 use_wandb: true
+wandb_group_prefix: PHYSICS
 # experiment
 experiment: exp
-# agent
-lr: 1e-4
-feature_dim: 256
-name: pie-g
 
+# replay buffer
+replay_buffer:
+  _target_: replay_buffer.EfficientReplayBuffer
+  buffer_size: 100000
+  batch_size: 256
+#  batch_size: 64
+  nstep: 3
+  discount: ${discount}
+  frame_stack: ${frame_stack}
+
+# agent
+name: pie-g
 agent:
   _target_: pieg.PIEGAgent
   obs_shape: ??? # to be specified later
   action_shape: ??? # to be specified later
   device: ${device}
   encoder: ${encoder}
-  lr: ${lr}
+  lr: 1e-4
   critic_target_tau: 0.01
   update_every_steps: 2
   use_tb: ${use_tb}
   num_expl_steps: 2000
+#  hidden_dim: 256
   hidden_dim: 64
-  feature_dim: ${feature_dim}
+#  feature_dim: 256
+  feature_dim: 64
   stddev_schedule: ${stddev_schedule}
   stddev_clip: 0.3
+  total_physics: ???
+#  physics_aux_sequence: [0,1,2,3,4,5,6,7,8,9]
+#  physics_aux_sequence: none # train without inner physical states' assistance
+  physics_aux_sequence: all # train with all inner physical states
+#  physics_aux_sequence: without_vision # train only by inner physical states
 
 hydra:
   run:

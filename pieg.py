@@ -100,7 +100,8 @@ class Critic(nn.Module):
 class PIEGAgent:
     def __init__(self, obs_shape, action_shape, device, encoder, lr, feature_dim,
                  hidden_dim, critic_target_tau, num_expl_steps,
-                 update_every_steps, stddev_schedule, stddev_clip, use_tb):
+                 update_every_steps, stddev_schedule, stddev_clip, use_tb,
+                 total_physics, physics_aux_sequence):
         self.device = device
         self.critic_target_tau = critic_target_tau
         self.update_every_steps = update_every_steps
@@ -108,15 +109,23 @@ class PIEGAgent:
         self.num_expl_steps = num_expl_steps
         self.stddev_schedule = stddev_schedule
         self.stddev_clip = stddev_clip
+        self.without_vision = False
+        if str(physics_aux_sequence).lower() == 'all':
+            self.physics_aux_sequence = list(range(total_physics))
+        elif str(physics_aux_sequence).lower() == 'without_vision':
+            self.without_vision = True
+            self.physics_aux_sequence = list(range(total_physics))
+        else:
+            self.physics_aux_sequence = None if str(physics_aux_sequence).lower() == 'none' else physics_aux_sequence
 
         self.encoder = encoder.to(device)
-        self.actor = Actor(self.encoder.repr_dim, action_shape, feature_dim,
-                           hidden_dim).to(device)
+        repr_dim = self.encoder.repr_dim if not self.without_vision else 0
+        if self.physics_aux_sequence:
+            repr_dim += len(self.physics_aux_sequence)
 
-        self.critic = Critic(self.encoder.repr_dim, action_shape, feature_dim,
-                             hidden_dim).to(device)
-        self.critic_target = Critic(self.encoder.repr_dim, action_shape,
-                                    feature_dim, hidden_dim).to(device)
+        self.actor = Actor(repr_dim, action_shape, feature_dim, hidden_dim).to(device)
+        self.critic = Critic(repr_dim, action_shape, feature_dim, hidden_dim).to(device)
+        self.critic_target = Critic(repr_dim, action_shape, feature_dim, hidden_dim).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
         # optimizers
@@ -129,6 +138,7 @@ class PIEGAgent:
 
         self.train()
         self.critic_target.train()
+        print(f'instantiated agent with repr_dim {repr_dim} physics_aux_sequence {self.physics_aux_sequence}')
 
     def train(self, training=True):
         self.training = training
@@ -136,9 +146,24 @@ class PIEGAgent:
         self.actor.train(training)
         self.critic.train(training)
 
-    def act(self, obs, step, eval_mode):
+    def append_physics(self, obs, physics):
+        """
+        :param obs: torch.tensor[dim, obs_after_encoder]
+        :param physics: type should be numpy.array or torch.tensor, and shape should be [batch, phy] or one dim [phy]
+        """
+        if self.physics_aux_sequence is None:
+            return obs
+        physics = torch.as_tensor(physics, dtype=obs.dtype)
+        physics = physics.unsqueeze(0) if physics.ndim == 1 else physics
+        physics = physics[:, self.physics_aux_sequence].to(self.device)
+        if self.without_vision:
+            return physics
+        else:
+            return torch.cat((obs, physics), axis=1)
+
+    def act(self, obs, physics, step, eval_mode):
         obs = torch.as_tensor(obs, device=self.device)
-        obs = self.encoder(obs.unsqueeze(0))
+        obs = self.append_physics(self.encoder(obs.unsqueeze(0)), physics)
         stddev = utils.schedule(self.stddev_schedule, step)
         dist = self.actor(obs, stddev)
         if eval_mode:
@@ -175,11 +200,13 @@ class PIEGAgent:
             metrics['critic_loss'] = critic_loss.item()
 
         # optimize encoder and critic
-        self.encoder_opt.zero_grad(set_to_none=True)
+        if not self.without_vision:
+          self.encoder_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
         self.critic_opt.step()
-        self.encoder_opt.step()
+        if not self.without_vision:
+          self.encoder_opt.step()
 
         return metrics
 
@@ -214,7 +241,7 @@ class PIEGAgent:
             return metrics
 
         batch = next(replay_iter)
-        obs, action, reward, discount, next_obs = utils.to_torch(batch, self.device)
+        obs, action, reward, discount, next_obs, physics, next_physics = utils.to_torch(batch, self.device)
 
         # augment
         obs = self.aug(obs.float())
@@ -228,6 +255,11 @@ class PIEGAgent:
 
         with torch.no_grad():
             next_obs = self.encoder(next_obs)
+
+        # append physics
+        obs = self.append_physics(obs, physics)
+        aug_obs = self.append_physics(aug_obs, physics)
+        next_obs = self.append_physics(next_obs, next_physics)
 
         if self.use_tb:
             metrics['batch_reward'] = reward.mean().item()

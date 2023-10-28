@@ -34,15 +34,13 @@ class ResEncoder(nn.Module):
   def __init__(self, frame_stack, obs_shape, repr_dim=1024):
     super(ResEncoder, self).__init__()
     self.model = resnet18(pretrained=True)
+    self.model.requires_grad_(False)
     self.frame_stack = frame_stack
     self.repr_dim = repr_dim
     self.transform = transforms.Compose([
       transforms.Resize(256),
       transforms.CenterCrop(224)
     ])
-
-    for param in self.model.parameters():
-      param.requires_grad = False
 
     self.model.fc = nn.Identity()
     obs_shape = [32, ] + [obs_shape[x] for x in range(3)]
@@ -143,6 +141,10 @@ class SimclrEncoder(nn.Module):
     self.frame_stack = frame_stack
     self.stacks = stacks
     self.applied_layers = applied_layers
+
+    # modify strides to make it running faster
+    self.model.net[1].blocks[0].projection.shortcut.stride = (3, 3)
+    self.model.net[1].blocks[0].net[0].stride = (3, 3)
 
     # test conv-net output and generate full-connnected layer
     obs_shape = [obs_shape[x] for x in range(3)]

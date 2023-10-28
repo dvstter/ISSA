@@ -17,6 +17,7 @@ class ExtendedTimeStep(NamedTuple):
     reward: Any
     discount: Any
     observation: Any
+    physics: Any
     action: Any
 
     def first(self):
@@ -151,19 +152,22 @@ class ExtendedTimeStepWrapper(dm_env.Environment):
 
     def reset(self):
         time_step = self._env.reset()
-        return self._augment_time_step(time_step)
+        physics = self._env.physics.get_state()
+        return self._augment_time_step(time_step, physics)
 
     def step(self, action):
         time_step = self._env.step(action)
-        return self._augment_time_step(time_step, action)
+        physics = self._env.physics.get_state()
+        return self._augment_time_step(time_step, physics, action)
 
-    def _augment_time_step(self, time_step, action=None):
+    def _augment_time_step(self, time_step, physics=None, action=None):
         if action is None:
             action_spec = self.action_spec()
             action = np.zeros(action_spec.shape, dtype=action_spec.dtype)
         return ExtendedTimeStep(observation=time_step.observation,
                                 step_type=time_step.step_type,
                                 action=action,
+                                physics=physics,
                                 reward=time_step.reward or 0.0,
                                 discount=time_step.discount or 1.0)
 
@@ -172,6 +176,11 @@ class ExtendedTimeStepWrapper(dm_env.Environment):
 
     def action_spec(self):
         return self._env.action_spec()
+
+    def num_physics_state(self):
+        physics = self._env.physics.get_state()
+        assert physics.ndim == 1
+        return physics.size
 
     def __getattr__(self, name):
         return getattr(self._env, name)

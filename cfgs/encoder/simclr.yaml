@@ -1,7 +1,7 @@
 _target_: encoder.SimclrEncoder
-ckpt_path: r50_1x_sk1.pth
+ckpt_path: r50_1x_sk0.pth
 frame_stack: ${frame_stack}
 obs_shape: ???
-repr_dim: 1024
+repr_dim: 256
 stacks: [cur,diff]
 applied_layers: 2

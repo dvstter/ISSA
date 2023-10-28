@@ -2,5 +2,5 @@ _target_: encoder.ViTEncoder
 frame_stack: ${frame_stack}
 obs_shape: ???
 device: ${device}
-repr_dim: 1024
+repr_dim: 256
 stacks: [cur,diff]
