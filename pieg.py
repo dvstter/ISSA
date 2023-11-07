@@ -174,7 +174,10 @@ class PIEGAgent:
                 action.uniform_(-1.0, 1.0)
         return action.cpu().numpy()[0]
 
-    def update_critic(self, obs, action, reward, discount, next_obs, step, aug_obs):
+    def update_critic(self, obs, physics, action, reward, discount, next_obs, next_physics, step, aug_obs):
+        obs = self.append_physics(obs, physics)
+        next_obs = self.append_physics(next_obs, next_physics)
+        aug_obs = self.append_physics(aug_obs, physics)
         metrics = dict()
 
         with torch.no_grad():
@@ -210,7 +213,8 @@ class PIEGAgent:
 
         return metrics
 
-    def update_actor(self, obs, step):
+    def update_actor(self, obs, physics, step):
+        obs = self.append_physics(obs, physics)
         metrics = dict()
 
         stddev = utils.schedule(self.stddev_schedule, step)
@@ -256,19 +260,14 @@ class PIEGAgent:
         with torch.no_grad():
             next_obs = self.encoder(next_obs)
 
-        # append physics
-        obs = self.append_physics(obs, physics)
-        aug_obs = self.append_physics(aug_obs, physics)
-        next_obs = self.append_physics(next_obs, next_physics)
-
         if self.use_tb:
             metrics['batch_reward'] = reward.mean().item()
 
         # update critic
-        metrics.update(self.update_critic(obs, action, reward, discount, next_obs, step, aug_obs))
+        metrics.update(self.update_critic(obs, physics, action, reward, discount, next_obs, next_physics, step, aug_obs))
 
         # update actor
-        metrics.update(self.update_actor(obs.detach(), step))
+        metrics.update(self.update_actor(obs.detach(), physics.detach(), step))
 
         # update critic target
         utils.soft_update_params(self.critic, self.critic_target, self.critic_target_tau)
