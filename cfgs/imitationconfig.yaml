@@ -11,7 +11,7 @@ discount: 0.99
 # train settings
 num_seed_frames: 4000
 num_train_frames: 1000000
-pure_vision_ratio: 0.5
+pure_vision_ratio: 0.0
 #pure_vision_ratio: 0.2 # used only for cartpole_swingup
 # eval
 eval_every_frames: 10000
@@ -35,7 +35,7 @@ replay_buffer:
   _target_: replay_buffer.EfficientReplayBuffer
   buffer_size: 100000
 #  batch_size: 64
-  batch_size: 256
+  batch_size: 32
   nstep: 3
   discount: ${discount}
   frame_stack: ${frame_stack}
@@ -53,10 +53,10 @@ agent:
   update_every_steps: 2
   use_tb: ${use_tb}
   num_expl_steps: 2000
-#  hidden_dim: 64
-#  feature_dim: 64
-  hidden_dim: 256
-  feature_dim: 256
+  hidden_dim: 32
+  feature_dim: 64
+#  hidden_dim: 256
+#  feature_dim: 256
   stddev_schedule: ${stddev_schedule}
   stddev_clip: 0.3
   total_physics: ???

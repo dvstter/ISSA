@@ -1,6 +1,6 @@
 #!/bin/zsh
 
-for n in {1..5}
+for n in {1..3}
 do
-  python piegtrain.py seed=$n && ./clear_all.sh
+  python imitationtrain.py seed=$n && ./clear_all.sh
 done

@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task@_global_: cheetah_run
+  - task@_global_: walker_stand
   - encoder: resnet
   - override hydra/launcher: submitit_local
 
@@ -13,18 +13,18 @@ num_seed_frames: 4000
 num_train_frames: 100000
 # eval
 eval_every_frames: 10000
-num_eval_episodes: 10
+num_eval_episodes: 3
 # snapshot
-save_snapshot: true
-load_snapshot: true
+save_snapshot: false
+load_snapshot: false
 # misc
-seed: 4
+seed: 5
 device: cuda:0
 save_video: false
 save_train_video: false
 use_tb: true
 use_wandb: true
-wandb_group_prefix: PHYSICS
+wandb_group_prefix: DIL
 # experiment
 experiment: exp
 
@@ -32,8 +32,8 @@ experiment: exp
 replay_buffer:
   _target_: replay_buffer.EfficientReplayBuffer
   buffer_size: 100000
-  batch_size: 256
-#  batch_size: 64
+  batch_size: 32
+#  batch_size: 256
   nstep: 3
   discount: ${discount}
   frame_stack: ${frame_stack}
@@ -59,8 +59,8 @@ agent:
   stddev_clip: 0.3
   total_physics: ???
 #  physics_aux_sequence: [0,1,2,3,4,5,6,7,8,9]
-#  physics_aux_sequence: none # train without inner physical states' assistance
-  physics_aux_sequence: all # train with all inner physical states
+  physics_aux_sequence: none # train without inner physical states' assistance
+#  physics_aux_sequence: all # train with all inner physical states
 #  physics_aux_sequence: without_vision # train only by inner physical states
 
 hydra:
